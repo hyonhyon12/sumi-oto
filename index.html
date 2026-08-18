@@ -329,18 +329,30 @@
       var binMin = Math.max(1, Math.round(80/binHz));
       var binMax = Math.min(freqData.length-1, Math.round(8000/binHz));
 
+      // weight by log(frequency), not raw bin index: most everyday sounds
+      // (voice, claps, footsteps) sit in the low end of the 80-8000Hz range,
+      // so a linear-bin centroid barely moves and everything looks the same
+      // hue. Log-frequency spacing matches how pitch is actually perceived,
+      // so quiet low rumbles vs. sharp high sounds spread across more of
+      // the color range instead of clumping together.
+      var logMin = Math.log(binMin*binHz);
+      var logMax = Math.log(binMax*binHz);
       var num=0, den=0;
       for (var b=binMin;b<=binMax;b++){
         var e = freqData[b];
-        num += b*e; den += e;
+        if (e < 4) continue; // ignore near-silent bins/noise floor
+        num += Math.log(b*binHz)*e; den += e;
       }
-      var centroidBin = den>0 ? (num/den) : (binMin+binMax)/2;
-      var norm = clamp((centroidBin-binMin)/(binMax-binMin), 0, 1);
+      var logCentroid = den>0 ? (num/den) : (logMin+logMax)/2;
+      var norm = clamp((logCentroid-logMin)/(logMax-logMin), 0, 1);
 
       var power = clamp((rms-threshold)/0.35 + 0.25, 0.08, 1);
 
-      // low freq -> cool (blue/violet ~255), high freq -> warm (red/orange ~8)
-      var hue = lerp(255, 8, norm);
+      // low freq -> blue, then purple -> pink/magenta -> red -> orange -> yellow
+      // as pitch rises. Deliberately skips the green/cyan band (90-200deg):
+      // most everyday sounds land mid-range, and a path through green there
+      // made almost everything look the same washed-out green.
+      var hue = (235 + norm*185) % 360;
       // pastel base: keep saturation high (like a pastel swatch, not gray)
       // and lightness high, so colors stay clearly colorful but soft/light
       var sat = lerp(55, 92, power);
