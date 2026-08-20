@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
+<title>墨音 Sumi-Oto</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#050608">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="墨音">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root{ color-scheme: dark; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:#050608; overflow:hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+  }
+  #app{ position:fixed; inset:0; width:100vw; height:100dvh; background:#050608; }
+  #camera{
+    position:absolute; width:2px; height:2px; opacity:0; pointer-events:none;
+  }
+  #gl{
+    position:absolute; inset:0; width:100%; height:100%;
+  }
+
+  /* ---- start screen ---- */
+  #startScreen{
+    position:absolute; inset:0; z-index:20;
+    display:flex; align-items:center; justify-content:center;
+    background:
+      radial-gradient(circle at 30% 20%, rgba(90,130,170,0.22), transparent 60%),
+      radial-gradient(circle at 70% 80%, rgba(70,90,140,0.22), transparent 60%),
+      #05070a;
+    transition: opacity .6s ease;
+  }
+  #startScreen.hidden{ opacity:0; pointer-events:none; }
+  .start-card{ max-width: 420px; width: 88%; text-align:center; color:#eee; padding: 32px 24px; }
+  .start-card h1{ font-weight:400; letter-spacing:.08em; font-size: 1.9rem; margin:0 0 4px; color:#f2f4f6; }
+  .start-card h1 span{ display:block; font-size:.75rem; letter-spacing:.3em; color:#8d97a3; margin-top:6px; text-transform:uppercase; }
+  .start-card p{ font-size:.92rem; line-height:1.7; color:#c3cad2; margin: 20px 0 28px; }
+  #startBtn{
+    appearance:none; border:1px solid rgba(255,255,255,0.35);
+    background: rgba(255,255,255,0.06);
+    color:#f2f4f6; padding:14px 40px; font-size:1rem;
+    border-radius:999px; letter-spacing:.15em;
+    cursor:pointer; backdrop-filter: blur(6px);
+  }
+  #startBtn:active{ background: rgba(255,255,255,0.18); }
+  .hint{ font-size:.75rem !important; color:#87909c !important; margin-top:18px !important; }
+  #insecureWarn{ margin-top:16px; font-size:.72rem; color:#e0b866; line-height:1.6; display:none; }
+  #insecureWarn.show{ display:block; }
+
+  /* ---- error box ---- */
+  #errorBox{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    z-index:30; max-width:82%; text-align:center;
+    color:#f0d5d5; background:rgba(30,10,10,0.85);
+    border:1px solid rgba(255,120,120,0.3);
+    padding:20px 22px; border-radius:14px; font-size:.85rem; line-height:1.7;
+  }
+  .hidden{ display:none !important; }
+
+  /* ---- hud ---- */
+  #hud{
+    position:absolute; left:0; right:0; bottom:0; z-index:15;
+    display:flex; justify-content:center; align-items:center;
+    padding: 22px 0 calc(22px + env(safe-area-inset-bottom));
+    gap:14px;
+  }
+  .hud-btn{
+    width:44px; height:44px; border-radius:50%;
+    background:rgba(255,255,255,0.10); border:1px solid rgba(255,255,255,0.28);
+    color:#eee; font-size:.9rem; display:flex; align-items:center; justify-content:center;
+    backdrop-filter: blur(6px);
+  }
+  #topFade{
+    position:absolute; top:0; left:0; right:0; z-index:14;
+    padding: calc(14px + env(safe-area-inset-top)) 18px 10px;
+    text-align:center; color:rgba(255,255,255,0.55);
+    font-size:.72rem; letter-spacing:.08em;
+    transition: opacity 1.2s ease;
+  }
+  #topFade.faded{ opacity:0; }
+
+  #infoModal{
+    position:absolute; inset:0; z-index:25; display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,0.75); backdrop-filter: blur(4px);
+  }
+  #infoModal.hidden{ display:none; }
+  .info-card{
+    max-width:380px; width:86%; background:#141414; border:1px solid rgba(255,255,255,0.12);
+    border-radius:16px; padding:24px; color:#ddd; font-size:.85rem; line-height:1.8;
+  }
+  .info-card h2{ margin:0 0 12px; font-weight:500; font-size:1.05rem; color:#f2f0ea; }
+  .info-card button{
+    margin-top:18px; width:100%; padding:11px; border-radius:10px;
+    background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2);
+    color:#eee; font-size:.85rem;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <video id="camera" autoplay playsinline muted></video>
+  <canvas id="gl"></canvas>
+
+  <div id="topFade">音を鳴らしてみてください</div>
+
+  <div id="hud" class="hidden">
+    <button class="hud-btn" id="clearBtn" title="消す">✕</button>
+    <button class="hud-btn" id="infoBtn" title="つかいかた">?</button>
+  </div>
+
+  <div id="infoModal" class="hidden">
+    <div class="info-card">
+      <h2>つかいかた</h2>
+      <p>
+        音を鳴らすと、その場所から水面のような波紋が広がります。
+        音が大きいほど波紋は強く、低い音ほど大きく、高い音ほど小さく広がります。<br><br>
+        複数の音を同時に鳴らすと、波紋どうしがぶつかって強め合ったり
+        打ち消し合ったりします(本物の水面と同じ仕組みです)。<br><br>
+        画面下の「✕」で波を静めます。
+      </p>
+      <button id="closeInfo">とじる</button>
+    </div>
+  </div>
+
+  <div id="startScreen">
+    <div class="start-card">
+      <h1>墨音<span>SUMI &nbsp;OTO</span></h1>
+      <p>カメラを音に向けて音を鳴らすと、その場所から水面のような波紋が広がり、複数の波紋がぶつかり合います。</p>
+      <button id="startBtn">はじめる</button>
+      <p class="hint">カメラとマイクへのアクセスを許可してください</p>
+      <p id="insecureWarn">
+        ⚠ このページは https:// または localhost で開く必要があります。<br>
+        ファイルを直接開いた場合、カメラ/マイクが使えないことがあります。
+      </p>
+    </div>
+  </div>
+
+  <div id="errorBox" class="hidden"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var videoEl = document.getElementById('camera');
+  var canvas  = document.getElementById('gl');
+  var startScreen = document.getElementById('startScreen');
+  var startBtn = document.getElementById('startBtn');
+  var errorBox = document.getElementById('errorBox');
+  var insecureWarn = document.getElementById('insecureWarn');
+  var hud = document.getElementById('hud');
+  var topFade = document.getElementById('topFade');
+  var infoBtn = document.getElementById('infoBtn');
+  var infoModal = document.getElementById('infoModal');
+  var closeInfo = document.getElementById('closeInfo');
+  var clearBtn = document.getElementById('clearBtn');
+
+  var isSecure = (location.protocol === 'https:' ||
+                   location.hostname === 'localhost' ||
+                   location.hostname === '127.0.0.1');
+  if (!isSecure) insecureWarn.classList.add('show');
+
+  function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+  function lerp(a,b,t){ return a + (b-a)*t; }
+
+  // =========================================================
+  // WebGL water-ripple simulation
+  // =========================================================
+  var gl = canvas.getContext('webgl', { alpha:false, antialias:false, preserveDrawingBuffer:false })
+         || canvas.getContext('experimental-webgl', { alpha:false, antialias:false });
+
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  var W = 0, H = 0;
+  var SIM_W = 200, SIM_H = 300; // recomputed on start() once we know aspect
+
+  function compileShader(src, type){
+    var sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)){
+      throw new Error('Shader compile error: ' + gl.getShaderInfoLog(sh));
+    }
+    return sh;
+  }
+  function linkProgram(vsSrc, fsSrc){
+    var vs = compileShader(vsSrc, gl.VERTEX_SHADER);
+    var fs = compileShader(fsSrc, gl.FRAGMENT_SHADER);
+    var prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)){
+      throw new Error('Program link error: ' + gl.getProgramInfoLog(prog));
+    }
+    return prog;
+  }
+
+  var VS = [
+    'attribute vec2 aPos;',
+    'varying vec2 vUv;',
+    'void main(){',
+    '  vUv = aPos * 0.5 + 0.5;',
+    '  gl_Position = vec4(aPos, 0.0, 1.0);',
+    '}'
+  ].join('\n');
+
+  var SIM_FS = [
+    'precision highp float;',
+    'varying vec2 vUv;',
+    'uniform sampler2D uCurrent;',
+    'uniform sampler2D uPrevious;',
+    'uniform vec2 uTexel;',
+    'uniform float uDamping;',
+    'float decode(vec4 c){ float h = (c.r - 0.5) * 2.0; return (abs(h) < 0.015) ? 0.0 : h; }',
+    'vec4 encode(float h){ float v = clamp(h*0.5+0.5, 0.0, 1.0); return vec4(v,v,v,1.0); }',
+    'void main(){',
+    '  float hl = decode(texture2D(uCurrent, vUv - vec2(uTexel.x,0.0)));',
+    '  float hr = decode(texture2D(uCurrent, vUv + vec2(uTexel.x,0.0)));',
+    '  float hu = decode(texture2D(uCurrent, vUv + vec2(0.0,uTexel.y)));',
+    '  float hd = decode(texture2D(uCurrent, vUv - vec2(0.0,uTexel.y)));',
+    '  float prevH = decode(texture2D(uPrevious, vUv));',
+    '  float newH = (hl + hr + hu + hd) * 0.5 - prevH;',
+    '  newH *= uDamping;',
+    '  if (abs(newH) < 0.02) newH = 0.0;',
+    '  gl_FragColor = encode(newH);',
+    '}'
+  ].join('\n');
+
+  var IMPULSE_FS = [
+    'precision highp float;',
+    'varying vec2 vUv;',
+    'uniform vec2 uPos;',
+    'uniform float uRadius;',
+    'uniform float uStrength;',
+    'void main(){',
+    '  float dist = length(vUv - uPos);',
+    '  float falloff = smoothstep(uRadius, 0.0, dist);',
+    '  float bump = falloff * uStrength;',
+    '  gl_FragColor = vec4(bump, bump, bump, 1.0);',
+    '}'
+  ].join('\n');
+
+  var DISPLAY_FS = [
+    'precision highp float;',
+    'varying vec2 vUv;',
+    'uniform sampler2D uHeight;',
+    'uniform sampler2D uVideo;',
+    'uniform vec2 uTexel;',
+    'uniform float uRefraction;',
+    'uniform float uSpecular;',
+    'float decode(vec4 c){ float h = (c.r - 0.5) * 2.0; return (abs(h) < 0.015) ? 0.0 : h; }',
+    'void main(){',
+    '  float hl = decode(texture2D(uHeight, vUv - vec2(uTexel.x,0.0)));',
+    '  float hr = decode(texture2D(uHeight, vUv + vec2(uTexel.x,0.0)));',
+    '  float hu = decode(texture2D(uHeight, vUv + vec2(0.0,uTexel.y)));',
+    '  float hd = decode(texture2D(uHeight, vUv - vec2(0.0,uTexel.y)));',
+    '  vec2 grad = vec2(hr - hl, hu - hd);',
+    '  vec2 videoUv = vUv + grad * uRefraction;',
+    '  videoUv = clamp(videoUv, vec2(0.001), vec2(0.999));',
+    '  vec3 base = texture2D(uVideo, videoUv).rgb;',
+    '  float spec = clamp(length(grad) * uSpecular, 0.0, 1.0);',
+    '  vec3 color = base + vec3(spec);',
+    '  gl_FragColor = vec4(color, 1.0);',
+    '}'
+  ].join('\n');
+
+  var simProg, impulseProg, displayProg;
+  var quadBuf;
+  var bufs = []; // 3 ping-pong height buffers {tex, fb}
+  var order = [0,1,2]; // prev, curr, next indices into bufs
+  var videoTex;
+  var glReady = false;
+  var pendingImpulses = [];
+
+  function createRTT(w,h){
+    var tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    var fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { tex: tex, fb: fb };
+  }
+
+  function clearRTT(rtt){
+    gl.bindFramebuffer(gl.FRAMEBUFFER, rtt.fb);
+    gl.viewport(0,0,SIM_W,SIM_H);
+    gl.clearColor(0.5,0.5,0.5,1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+
+  function initGL(){
+    simProg = linkProgram(VS, SIM_FS);
+    impulseProg = linkProgram(VS, IMPULSE_FS);
+    displayProg = linkProgram(VS, DISPLAY_FS);
+
+    quadBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+
+    bufs = [createRTT(SIM_W,SIM_H), createRTT(SIM_W,SIM_H), createRTT(SIM_W,SIM_H)];
+    clearRTT(bufs[0]); clearRTT(bufs[1]); clearRTT(bufs[2]);
+    order = [0,1,2];
+
+    videoTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, videoTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+
+    glReady = true;
+  }
+
+  function bindQuad(prog){
+    var loc = gl.getAttribLocation(prog, 'aPos');
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  }
+
+  function resize(){
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width  = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+    if (gl) gl.viewport(0,0,canvas.width, canvas.height);
+  }
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', function(){ setTimeout(resize, 200); });
+  resize();
+
+  function stepSimulation(){
+    var prev = bufs[order[0]], curr = bufs[order[1]], next = bufs[order[2]];
+    gl.bindFramebuffer(gl.FRAMEBUFFER, next.fb);
+    gl.viewport(0,0,SIM_W,SIM_H);
+    gl.useProgram(simProg);
+    bindQuad(simProg);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, curr.tex);
+    gl.uniform1i(gl.getUniformLocation(simProg,'uCurrent'), 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, prev.tex);
+    gl.uniform1i(gl.getUniformLocation(simProg,'uPrevious'), 1);
+    gl.uniform2f(gl.getUniformLocation(simProg,'uTexel'), 1/SIM_W, 1/SIM_H);
+    gl.uniform1f(gl.getUniformLocation(simProg,'uDamping'), 0.955);
+    gl.disable(gl.BLEND);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    order = [order[1], order[2], order[0]];
+  }
+
+  function applyImpulse(nx, ny, radius, strength){
+    var curr = bufs[order[1]];
+    gl.bindFramebuffer(gl.FRAMEBUFFER, curr.fb);
+    gl.viewport(0,0,SIM_W,SIM_H);
+    gl.useProgram(impulseProg);
+    bindQuad(impulseProg);
+    gl.uniform2f(gl.getUniformLocation(impulseProg,'uPos'), nx, 1-ny);
+    gl.uniform1f(gl.getUniformLocation(impulseProg,'uRadius'), radius);
+    gl.uniform1f(gl.getUniformLocation(impulseProg,'uStrength'), strength);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.disable(gl.BLEND);
+  }
+
+  function renderDisplay(){
+    if (videoEl.readyState >= 2){
+      gl.bindTexture(gl.TEXTURE_2D, videoTex);
+      try {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoEl);
+      } catch(e){ /* frame not ready yet, ignore */ }
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0,0,canvas.width, canvas.height);
+    gl.useProgram(displayProg);
+    bindQuad(displayProg);
+    var curr = bufs[order[1]];
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, curr.tex);
+    gl.uniform1i(gl.getUniformLocation(displayProg,'uHeight'), 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, videoTex);
+    gl.uniform1i(gl.getUniformLocation(displayProg,'uVideo'), 1);
+    gl.uniform2f(gl.getUniformLocation(displayProg,'uTexel'), 1/SIM_W, 1/SIM_H);
+    gl.uniform1f(gl.getUniformLocation(displayProg,'uRefraction'), 0.09);
+    gl.uniform1f(gl.getUniformLocation(displayProg,'uSpecular'), 3.2);
+    gl.disable(gl.BLEND);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  var lastImpulseAt = -1e9;
+  var frameCount = 0;
+  var lastWatchdogFrame = -1000;
+
+  // The wave-equation buffers are only 8-bit precision, which can leave a
+  // faint, visually-stuck residue after everything should have gone calm
+  // (it never quite rounds down to exact zero on its own). Once the water
+  // has been quiet for a couple of seconds, take one cheap readback and, if
+  // whatever's left is small, force it fully flat rather than let it linger.
+  function watchdogSettle(){
+    var curr = bufs[order[1]];
+    gl.bindFramebuffer(gl.FRAMEBUFFER, curr.fb);
+    var px = new Uint8Array(SIM_W*SIM_H*4);
+    gl.readPixels(0,0,SIM_W,SIM_H,gl.RGBA,gl.UNSIGNED_BYTE,px);
+    var maxDev = 0;
+    for (var i=0;i<px.length;i+=4){
+      var d = Math.abs(px[i]-128);
+      if (d>maxDev) maxDev = d;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (maxDev > 0 && maxDev < 26){
+      clearRTT(bufs[0]); clearRTT(bufs[1]); clearRTT(bufs[2]);
+    }
+  }
+
+  function frame(){
+    if (!glReady) { requestAnimationFrame(frame); return; }
+
+    while (pendingImpulses.length){
+      var im = pendingImpulses.shift();
+      applyImpulse(im.x, im.y, im.radius, im.strength);
+    }
+
+    stepSimulation();
+    stepSimulation();
+    renderDisplay();
+
+    frameCount++;
+    if (pendingImpulses.length === 0 &&
+        (performance.now() - lastImpulseAt) > 2200 &&
+        (frameCount - lastWatchdogFrame) > 40){
+      lastWatchdogFrame = frameCount;
+      watchdogSettle();
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  function queueRipple(nx, ny, radius, strength){
+    lastImpulseAt = performance.now();
+    pendingImpulses.push({ x: clamp(nx,0.02,0.98), y: clamp(ny,0.02,0.98), radius: radius, strength: strength });
+    if (pendingImpulses.length > 12) pendingImpulses.shift();
+  }
+
+  function calmWater(){
+    if (!glReady) return;
+    clearRTT(bufs[0]); clearRTT(bufs[1]); clearRTT(bufs[2]);
+  }
+
+  // =========================================================
+  // Audio analysis -> ripple triggers
+  // =========================================================
+  var audioCtx, analyser, timeData, freqData;
+  var emaRms = 0.02;
+  var lastSpawn = 0;
+
+  function analyzeAndMaybeSpawn(){
+    analyser.getByteTimeDomainData(timeData);
+    var sumSq = 0;
+    for (var i=0;i<timeData.length;i++){
+      var v = (timeData[i]-128)/128;
+      sumSq += v*v;
+    }
+    var rms = Math.sqrt(sumSq/timeData.length);
+    emaRms = emaRms*0.92 + rms*0.08;
+
+    var now = performance.now();
+    var threshold = Math.max(0.045, emaRms*1.55);
+    if (rms > threshold && (now-lastSpawn) > 140){
+      lastSpawn = now;
+
+      analyser.getByteFrequencyData(freqData);
+      var nyquist = audioCtx.sampleRate/2;
+      var binHz = nyquist/freqData.length;
+      var binMin = Math.max(1, Math.round(80/binHz));
+      var binMax = Math.min(freqData.length-1, Math.round(8000/binHz));
+
+      var logMin = Math.log(binMin*binHz);
+      var logMax = Math.log(binMax*binHz);
+      var peakBin = binMin, peakE = -1;
+      for (var b=binMin;b<=binMax;b++){
+        var e = freqData[b];
+        if (e > peakE){ peakE = e; peakBin = b; }
+      }
+      var logPeak = Math.log(peakBin*binHz);
+      var norm = clamp((logPeak-logMin)/(logMax-logMin), 0, 1);
+
+      var power = clamp((rms-threshold)/0.35 + 0.25, 0.08, 1);
+
+      // low pitch -> bigger, slower splash. high pitch -> small tight droplet.
+      var radius = lerp(0.16, 0.045, norm);
+      var strength = lerp(0.35, 1.0, power);
+
+      var nx = 0.5 + (norm-0.5)*0.7 + (Math.random()-0.5)*0.18;
+      var ny = 0.35 + Math.random()*0.35 + (power-0.5)*0.08;
+
+      queueRipple(nx, ny, radius, strength);
+    }
+  }
+
+  function audioLoop(){
+    analyzeAndMaybeSpawn();
+    requestAnimationFrame(audioLoop);
+  }
+
+  // =========================================================
+  // Start flow
+  // =========================================================
+  function showError(msg){
+    errorBox.textContent = msg;
+    errorBox.classList.remove('hidden');
+  }
+
+  function start(){
+    if (!gl){
+      showError('お使いの端末・ブラウザはこの効果(WebGL)に対応していません。');
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      showError('このブラウザはカメラ/マイクへのアクセスに対応していません。Safari または Chrome の最新版で、https:// のページを開いてください。');
+      return;
+    }
+
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width:{ideal:1280}, height:{ideal:720} },
+      audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+    }).then(function(stream){
+      videoEl.srcObject = stream;
+      return videoEl.play().then(function(){ return stream; });
+    }).then(function(stream){
+      SIM_W = 200;
+      SIM_H = Math.max(120, Math.round(SIM_W * (window.innerHeight / window.innerWidth)));
+      initGL();
+
+      var AC = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AC();
+      var source = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.35;
+      timeData = new Uint8Array(analyser.fftSize);
+      freqData = new Uint8Array(analyser.frequencyBinCount);
+      source.connect(analyser);
+
+      startScreen.classList.add('hidden');
+      hud.classList.remove('hidden');
+      setTimeout(function(){ topFade.classList.add('faded'); }, 3500);
+
+      requestAnimationFrame(frame);
+      requestAnimationFrame(audioLoop);
+    }).catch(function(err){
+      var msg = '';
+      if (err && err.name === 'NotAllowedError'){
+        msg = 'カメラ / マイクへのアクセスが許可されませんでした。ブラウザの設定からこのサイトのカメラ・マイクの許可を有効にして、再読み込みしてください。';
+      } else if (err && err.name === 'NotFoundError'){
+        msg = 'カメラまたはマイクが見つかりませんでした。';
+      } else if (!isSecure){
+        msg = 'カメラ/マイクの利用には https:// または localhost での表示が必要です。このページを安全な接続で開き直してください。';
+      } else {
+        msg = 'カメラ/マイクの起動に失敗しました: ' + (err && err.message ? err.message : err);
+      }
+      showError(msg);
+    });
+  }
+
+  startBtn.addEventListener('click', start);
+  infoBtn.addEventListener('click', function(){ infoModal.classList.remove('hidden'); });
+  closeInfo.addEventListener('click', function(){ infoModal.classList.add('hidden'); });
+  clearBtn.addEventListener('click', calmWater);
+
+})();
+</script>
+</body>
+</html>
